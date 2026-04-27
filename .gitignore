@@ -1,0 +1,44 @@
+# macOS
+.DS_Store
+
+# IntelliJ / JetBrains
+.idea/
+*.iml
+out/
+
+# VS Code
+.vscode/
+
+# Maven
+target/
+dependency-reduced-pom.xml
+
+# Java
+*.class
+*.log
+hs_err_pid*
+replay_pid*
+
+# SAM / AWS
+.aws-sam/
+samconfig.toml
+
+# Environment / secrets
+.env
+.env.*
+*.pem
+*.key
+
+# OS / temp files
+*.swp
+*.swo
+*~
+tmp/
+temp/
+
+# Test / local output
+coverage/
+reports/
+
+# Optional local config
+local.properties
