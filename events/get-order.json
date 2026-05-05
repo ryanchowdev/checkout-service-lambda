@@ -1,0 +1,20 @@
+{
+    "resource": "/orders/{orderId}",
+    "path": "/orders/REPLACE_WITH_ORDER_ID",
+    "httpMethod": "GET",
+    "headers": {},
+    "multiValueHeaders": {},
+    "queryStringParameters": null,
+    "multiValueQueryStringParameters": null,
+    "pathParameters": {
+      "orderId": "REPLACE_WITH_ORDER_ID"
+    },
+    "stageVariables": null,
+    "requestContext": {
+      "resourcePath": "/orders/{orderId}",
+      "httpMethod": "GET",
+      "path": "/Prod/orders/REPLACE_WITH_ORDER_ID"
+    },
+    "body": null,
+    "isBase64Encoded": false
+  }

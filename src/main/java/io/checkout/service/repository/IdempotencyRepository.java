@@ -4,20 +4,17 @@
  * Author:
  *  Ryan Chow
  * 
- * Description:
- *  Persistence layer for idempotency data
+ * Description:\
+ *  Repository for reading idempotency records from DynamoDB
  */
 package io.checkout.service.repository;
 
 import io.checkout.service.model.IdempotencyRecord;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
-import software.amazon.awssdk.services.dynamodb.model.ConditionalCheckFailedException;
 import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
-import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 
@@ -31,43 +28,17 @@ public class IdempotencyRepository {
         this.tableName = tableName;
     }
 
-    // Atomically claim an idempotency key
-    // Only the first matching request should succeed
-    public boolean claimKey(String idempotencyKey, String requestFingerprint, String createdAt) {
-        // Request data
-        Map<String, AttributeValue> item = new HashMap<>();
-        item.put("idempotencyKey", AttributeValue.fromS(idempotencyKey));
-        item.put("requestFingerprint", AttributeValue.fromS(requestFingerprint));
-        item.put("createdAt", AttributeValue.fromS(createdAt));
-
-        // Try to insert new idempotency record
-        // Ensure idempotencyKey does not already exist
-        PutItemRequest request = PutItemRequest.builder()
-                .tableName(tableName)
-                .item(item)
-                .conditionExpression("attribute_not_exists(idempotencyKey)")
-                .build();
-
-        // On success: allow request to continue
-        try {
-            dynamoDbClient.putItem(request);
-            return true;
-        // On failure: Block duplicate request
-        } catch (ConditionalCheckFailedException e) {
-            return false;
-        }
-    }
-
-    // Load existing idempotency state to decide whether to replay or reject a retry
+    // Strongly read the idempotency record so retries see the latest committed state
     public Optional<IdempotencyRecord> getRecord(String idempotencyKey) {
         Map<String, AttributeValue> key = Map.of(
                 "idempotencyKey", AttributeValue.fromS(idempotencyKey)
         );
 
-        // Check idempotency record by key
+        // Ensure strong consistency with consistentRead
         GetItemResponse response = dynamoDbClient.getItem(GetItemRequest.builder()
                 .tableName(tableName)
                 .key(key)
+                .consistentRead(true)
                 .build());
 
         if (!response.hasItem() || response.item().isEmpty()) {
@@ -89,30 +60,16 @@ public class IdempotencyRepository {
         return Optional.of(record);
     }
 
-    // Save the completed response so future retries can return the same result
-    public void saveCompletedResponse(String idempotencyKey, int responseCode, String responseBody) {
-        Map<String, AttributeValue> key = Map.of(
-                "idempotencyKey", AttributeValue.fromS(idempotencyKey)
-        );
-
-        // Store response code and response body
-        Map<String, AttributeValue> values = new HashMap<>();
-        values.put(":responseCode", AttributeValue.fromN(Integer.toString(responseCode)));
-        values.put(":responseBody", AttributeValue.fromS(responseBody));
-
-        // Update idempotency record
-        dynamoDbClient.updateItem(builder -> builder
-                .tableName(tableName)
-                .key(key)
-                .updateExpression("SET responseCode = :responseCode, responseBody = :responseBody")
-                .expressionAttributeValues(values)
-        );
-    }
-
+    // Helper function for reading fields
     private String readString(Map<String, AttributeValue> item, String field) {
         if (!item.containsKey(field) || item.get(field).s() == null) {
             return null;
         }
         return item.get(field).s();
+    }
+
+    // Expose the table name so OrderService can use it in DynamoDB transactions
+    public String getTableName() {
+        return tableName;
     }
 }
