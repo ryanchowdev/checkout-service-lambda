@@ -13,6 +13,7 @@ Globals:
       Variables:
         ORDERS_TABLE_NAME: !Ref OrdersTable
         IDEMPOTENCY_TABLE_NAME: !Ref IdempotencyTable
+        ITEMS_TABLE_NAME: !Ref ItemsTable
 
 Resources:
   CheckoutApiFunction:
@@ -25,6 +26,8 @@ Resources:
             TableName: !Ref OrdersTable
         - DynamoDBCrudPolicy:
             TableName: !Ref IdempotencyTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ItemsTable
       Events:
         HealthGet:
           Type: Api
@@ -40,6 +43,16 @@ Resources:
           Type: Api
           Properties:
             Path: /orders/{orderId}
+            Method: get
+        ItemsPost:
+          Type: Api
+          Properties:
+            Path: /items
+            Method: post
+        ItemGet:
+          Type: Api
+          Properties:
+            Path: /items/{itemId}
             Method: get
 
   OrdersTable:
@@ -64,6 +77,18 @@ Resources:
           AttributeType: S
       KeySchema:
         - AttributeName: idempotencyKey
+          KeyType: HASH
+
+  ItemsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: checkout-items
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: itemId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: itemId
           KeyType: HASH
 
 Outputs:

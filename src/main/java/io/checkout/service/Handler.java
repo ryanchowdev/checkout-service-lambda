@@ -18,6 +18,10 @@ import io.checkout.service.dto.CreateOrderRequest;
 import io.checkout.service.dto.CreateOrderResponse;
 import io.checkout.service.dto.ErrorResponse;
 import io.checkout.service.dto.GetOrderResponse;
+import io.checkout.service.dto.CreateItemRequest;
+import io.checkout.service.dto.ItemResponse;
+import io.checkout.service.repository.ItemRepository;
+import io.checkout.service.service.ItemService;
 import io.checkout.service.exception.ConflictException;
 import io.checkout.service.exception.NotFoundException;
 import io.checkout.service.exception.ValidationException;
@@ -33,16 +37,21 @@ import java.util.Map;
 public class Handler implements RequestHandler<APIGatewayProxyRequestEvent, APIGatewayProxyResponseEvent> {
 
     private final OrderService orderService;
+    private final ItemService itemService;
 
     // Initialize DynamoDB repositories and the main order service
     public Handler() {
         DynamoDbClient dynamoDbClient = DynamoDbClientFactory.getClient();
         String ordersTableName = System.getenv("ORDERS_TABLE_NAME");
         String idempotencyTableName = System.getenv("IDEMPOTENCY_TABLE_NAME");
+        String itemsTableName = System.getenv("ITEMS_TABLE_NAME");
 
         OrderRepository orderRepository = new OrderRepository(dynamoDbClient, ordersTableName);
         IdempotencyRepository idempotencyRepository = new IdempotencyRepository(dynamoDbClient, idempotencyTableName);
         this.orderService = new OrderService(orderRepository, idempotencyRepository, dynamoDbClient);
+
+        ItemRepository itemRepository = new ItemRepository(dynamoDbClient, itemsTableName);
+        this.itemService = new ItemService(itemRepository);
     }
 
     // Main Lambda entry point: route incoming API Gateway requests
@@ -68,6 +77,16 @@ public class Handler implements RequestHandler<APIGatewayProxyRequestEvent, APIG
             // GET /orders/{orderId}
             if ("GET".equals(method) && path.startsWith("/orders/")) {
                 return handleGetOrder(request);
+            }
+
+            // POST /items
+            if ("POST".equals(method) && "/items".equals(path)) {
+                return handleCreateItem(request);
+            }
+            
+            // GET /items/{itemId}
+            if ("GET".equals(method) && path.startsWith("/items/")) {
+                return handleGetItem(request);
             }
 
             // Invalid route
@@ -161,5 +180,36 @@ public class Handler implements RequestHandler<APIGatewayProxyRequestEvent, APIG
         response.setHeaders(headers);
         response.setBody(JsonUtil.toJson(body));
         return response;
+    }
+
+    // Parse the item creation request
+    // Handle validation and business logic with ItemService
+    private APIGatewayProxyResponseEvent handleCreateItem(APIGatewayProxyRequestEvent request) {
+        CreateItemRequest createItemRequest = JsonUtil.fromJson(request.getBody(), CreateItemRequest.class);
+        ItemResponse response = itemService.createItem(createItemRequest);
+        return jsonResponse(201, response);
+    }
+    
+    // Load an inventory item by ID and return it as JSON
+    private APIGatewayProxyResponseEvent handleGetItem(APIGatewayProxyRequestEvent request) {
+        String itemId = extractItemId(request);
+        ItemResponse response = itemService.getItem(itemId);
+        return jsonResponse(200, response);
+    }
+    
+    // Extract itemId from API Gateway path parameters
+    private String extractItemId(APIGatewayProxyRequestEvent request) {
+        if (request.getPathParameters() != null && request.getPathParameters().containsKey("itemId")) {
+            return request.getPathParameters().get("itemId");
+        }
+    
+        // Fallback for local testing or events without parsed path parameters
+        String path = normalizePath(request.getPath());
+        String prefix = "/items/";
+        if (path.startsWith(prefix) && path.length() > prefix.length()) {
+            return path.substring(prefix.length());
+        }
+    
+        return null;
     }
 }
