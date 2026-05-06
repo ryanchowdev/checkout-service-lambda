@@ -1,0 +1,21 @@
+{
+    "resource": "/reservations",
+    "path": "/reservations",
+    "httpMethod": "POST",
+    "headers": {
+      "Content-Type": "application/json",
+      "Idempotency-Key": "reserve-key-1"
+    },
+    "multiValueHeaders": {},
+    "queryStringParameters": null,
+    "multiValueQueryStringParameters": null,
+    "pathParameters": null,
+    "stageVariables": null,
+    "requestContext": {
+      "resourcePath": "/reservations",
+      "httpMethod": "POST",
+      "path": "/Prod/reservations"
+    },
+    "body": "{\"customer_id\":\"cust1\",\"item_id\":\"item1\",\"quantity\":2}",
+    "isBase64Encoded": false
+  }

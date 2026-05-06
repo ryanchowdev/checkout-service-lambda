@@ -11,6 +11,7 @@
 package io.checkout.service.util;
 
 import io.checkout.service.dto.CreateOrderRequest;
+import io.checkout.service.dto.CreateReservationRequest;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -30,6 +31,24 @@ public final class FingerprintUtil {
         );
 
         // Hash with SHA-256 and return a hex string
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(canonical.getBytes(StandardCharsets.UTF_8));
+            return toHex(hash);
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException("Failed to compute request fingerprint", e);
+        }
+    }
+
+    // Generate a stable hash for reservation requests to support idempotent retries
+    public static String fingerprint(CreateReservationRequest request) {
+        // Use the business fields that define whether two reservation requests are identical
+        String canonical = String.join("|",
+                nullSafe(request.getCustomerId()),
+                nullSafe(request.getItemId()),
+                request.getQuantity() == null ? "" : request.getQuantity().toString()
+        );
+    
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] hash = digest.digest(canonical.getBytes(StandardCharsets.UTF_8));
