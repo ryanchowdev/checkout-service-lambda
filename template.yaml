@@ -16,6 +16,12 @@ Globals:
         ITEMS_TABLE_NAME: !Ref ItemsTable
 
 Resources:
+  CheckoutApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: checkout-service-api
+      StageName: Prod
+
   CheckoutApiFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -28,31 +34,48 @@ Resources:
             TableName: !Ref IdempotencyTable
         - DynamoDBCrudPolicy:
             TableName: !Ref ItemsTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:TransactWriteItems
+              Resource:
+                - !GetAtt OrdersTable.Arn
+                - !GetAtt IdempotencyTable.Arn
+                - !GetAtt ItemsTable.Arn
       Events:
         HealthGet:
           Type: Api
           Properties:
+            RestApiId: !Ref CheckoutApi
             Path: /health
             Method: get
-        OrdersPost:
-          Type: Api
-          Properties:
-            Path: /orders
-            Method: post
-        OrderGet:
-          Type: Api
-          Properties:
-            Path: /orders/{orderId}
-            Method: get
+
         ItemsPost:
           Type: Api
           Properties:
+            RestApiId: !Ref CheckoutApi
             Path: /items
             Method: post
+
         ItemGet:
           Type: Api
           Properties:
+            RestApiId: !Ref CheckoutApi
             Path: /items/{itemId}
+            Method: get
+
+        OrdersPost:
+          Type: Api
+          Properties:
+            RestApiId: !Ref CheckoutApi
+            Path: /orders
+            Method: post
+
+        OrderGet:
+          Type: Api
+          Properties:
+            RestApiId: !Ref CheckoutApi
+            Path: /orders/{orderId}
             Method: get
 
   OrdersTable:
@@ -91,8 +114,78 @@ Resources:
         - AttributeName: itemId
           KeyType: HASH
 
+  CheckoutWebAcl:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: checkout-service-web-acl
+      Scope: REGIONAL
+      Description: IP-based rate limiting for checkout service order lookups
+      DefaultAction:
+        Allow: {}
+      CustomResponseBodies:
+        TooManyRequestsBody:
+          ContentType: APPLICATION_JSON
+          Content: '{"error":"Too Many Requests","message":"Rate limit exceeded"}'
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: checkout-service-web-acl
+      Rules:
+        - Name: GetOrdersIpRateLimit
+          Priority: 0
+          Action:
+            Block:
+              CustomResponse:
+                ResponseCode: 429
+                CustomResponseBodyKey: TooManyRequestsBody
+          Statement:
+            RateBasedStatement:
+              Limit: 10
+              AggregateKeyType: IP
+              EvaluationWindowSec: 60
+              ScopeDownStatement:
+                AndStatement:
+                  Statements:
+                    - ByteMatchStatement:
+                        FieldToMatch:
+                          Method: {}
+                        PositionalConstraint: EXACTLY
+                        SearchString: GET
+                        TextTransformations:
+                          - Priority: 0
+                            Type: NONE
+                    - OrStatement:
+                        Statements:
+                          - ByteMatchStatement:
+                              FieldToMatch:
+                                UriPath: {}
+                              PositionalConstraint: STARTS_WITH
+                              SearchString: /Prod/orders/
+                              TextTransformations:
+                                - Priority: 0
+                                  Type: NONE
+                          - ByteMatchStatement:
+                              FieldToMatch:
+                                UriPath: {}
+                              PositionalConstraint: STARTS_WITH
+                              SearchString: /orders/
+                              TextTransformations:
+                                - Priority: 0
+                                  Type: NONE
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: get-orders-ip-rate-limit
+
+  CheckoutWebAclAssociation:
+    Type: AWS::WAFv2::WebACLAssociation
+    DependsOn:
+      - CheckoutApiProdStage
+    Properties:
+      ResourceArn: !Sub "arn:aws:apigateway:${AWS::Region}::/restapis/${CheckoutApi}/stages/Prod"
+      WebACLArn: !GetAtt CheckoutWebAcl.Arn
 
 Outputs:
   ApiUrl:
     Description: API Gateway endpoint URL
-    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/"
+    Value: !Sub "https://${CheckoutApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/"
