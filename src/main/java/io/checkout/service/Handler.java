@@ -22,10 +22,6 @@ import io.checkout.service.dto.CreateItemRequest;
 import io.checkout.service.dto.ItemResponse;
 import io.checkout.service.repository.ItemRepository;
 import io.checkout.service.service.ItemService;
-import io.checkout.service.dto.CreateReservationRequest;
-import io.checkout.service.dto.CreateReservationResponse;
-import io.checkout.service.repository.ReservationRepository;
-import io.checkout.service.service.ReservationService;
 import io.checkout.service.exception.ConflictException;
 import io.checkout.service.exception.NotFoundException;
 import io.checkout.service.exception.ValidationException;
@@ -42,7 +38,6 @@ public class Handler implements RequestHandler<APIGatewayProxyRequestEvent, APIG
 
     private final OrderService orderService;
     private final ItemService itemService;
-    private final ReservationService reservationService;
 
     // Initialize DynamoDB repositories and the main order service
     public Handler() {
@@ -51,22 +46,13 @@ public class Handler implements RequestHandler<APIGatewayProxyRequestEvent, APIG
         String ordersTableName = System.getenv("ORDERS_TABLE_NAME");
         String idempotencyTableName = System.getenv("IDEMPOTENCY_TABLE_NAME");
         String itemsTableName = System.getenv("ITEMS_TABLE_NAME");
-        String reservationsTableName = System.getenv("RESERVATIONS_TABLE_NAME");
     
         OrderRepository orderRepository = new OrderRepository(dynamoDbClient, ordersTableName);
         IdempotencyRepository idempotencyRepository = new IdempotencyRepository(dynamoDbClient, idempotencyTableName);
-        this.orderService = new OrderService(orderRepository, idempotencyRepository, dynamoDbClient);
-    
         ItemRepository itemRepository = new ItemRepository(dynamoDbClient, itemsTableName);
+
         this.itemService = new ItemService(itemRepository);
-    
-        ReservationRepository reservationRepository = new ReservationRepository(reservationsTableName);
-        this.reservationService = new ReservationService(
-                itemRepository,
-                reservationRepository,
-                idempotencyRepository,
-                dynamoDbClient
-        );
+        this.orderService = new OrderService(orderRepository, idempotencyRepository, itemRepository, dynamoDbClient);
     }
 
     // Main Lambda entry point: route incoming API Gateway requests
@@ -104,11 +90,6 @@ public class Handler implements RequestHandler<APIGatewayProxyRequestEvent, APIG
                 return handleGetItem(request);
             }
 
-            // POST /reservations
-            if ("POST".equals(method) && "/reservations".equals(path)) {
-                return handleCreateReservation(request);
-            }
-
             // Invalid route
             return jsonResponse(404, new ErrorResponse("Not Found", "No route matched " + method + " " + path));
         // Bad request, failed validation
@@ -143,14 +124,6 @@ public class Handler implements RequestHandler<APIGatewayProxyRequestEvent, APIG
         String orderId = extractOrderId(request);
         GetOrderResponse response = orderService.getOrder(orderId);
         return jsonResponse(200, response);
-    }
-
-    // Parse the reservation request and handle transactional logic with ReservationService
-    private APIGatewayProxyResponseEvent handleCreateReservation(APIGatewayProxyRequestEvent request) {
-        String idempotencyKey = header(request, "Idempotency-Key");
-        CreateReservationRequest createReservationRequest = JsonUtil.fromJson(request.getBody(), CreateReservationRequest.class);
-        CreateReservationResponse response = reservationService.createReservation(idempotencyKey, createReservationRequest);
-        return jsonResponse(201, response);
     }
 
     // Extract the orderId from API Gateway path parameters or the raw request path

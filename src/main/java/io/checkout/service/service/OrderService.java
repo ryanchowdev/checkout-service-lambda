@@ -19,8 +19,10 @@ import io.checkout.service.model.IdempotencyRecord;
 import io.checkout.service.model.Order;
 import io.checkout.service.repository.IdempotencyRepository;
 import io.checkout.service.repository.OrderRepository;
+import io.checkout.service.repository.ItemRepository;
 import io.checkout.service.util.FingerprintUtil;
 import io.checkout.service.util.JsonUtil;
+import software.amazon.awssdk.services.dynamodb.model.Update;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.CancellationReason;
@@ -40,18 +42,21 @@ public class OrderService {
     private final OrderRepository orderRepository;
     private final IdempotencyRepository idempotencyRepository;
     private final DynamoDbClient dynamoDbClient;
+    private final ItemRepository itemRepository;
 
     public OrderService(
-            OrderRepository orderRepository,
-            IdempotencyRepository idempotencyRepository,
-            DynamoDbClient dynamoDbClient
+        OrderRepository orderRepository,
+        IdempotencyRepository idempotencyRepository,
+        ItemRepository itemRepository,
+        DynamoDbClient dynamoDbClient
     ) {
         this.orderRepository = orderRepository;
         this.idempotencyRepository = idempotencyRepository;
+        this.itemRepository = itemRepository;
         this.dynamoDbClient = dynamoDbClient;
     }
 
-    // Create orders and handle idempotent retries
+    // Create an order while atomically reserving inventory and saving idempotency state
     public CreateOrderResponse createOrder(String idempotencyKey, CreateOrderRequest request) {
         // First validate request
         validateCreateOrder(idempotencyKey, request);
@@ -75,14 +80,13 @@ public class OrderService {
                 now
         );
 
-        // Write the order and saved response in one DynamoDB transaction
-        // On success: return response
+        // Commit inventory decrement, order creation, and idempotency response together
         try {
             createOrderTransaction(order, idempotencyKey, fingerprint, responseJson, now);
             return response;
-        // On failure: Idempotency key already exists
-        // Replay the saved response or reject conflicting payloads
         } catch (TransactionCanceledException e) {
+            // First handle idempotency conflict
+            // Replay the saved response or reject conflicting payloads
             if (wasIdempotencyConflict(e)) {
                 // Read existing idempotency record
                 IdempotencyRecord existing = idempotencyRepository.getRecord(idempotencyKey)
@@ -102,6 +106,12 @@ public class OrderService {
                 return JsonUtil.fromJson(existing.getResponseBody(), CreateOrderResponse.class);
             }
 
+            // For inventory conflict, the item is missing or out of stock
+            if (wasInventoryConflict(e)) {
+                throw new ConflictException("Insufficient inventory for item: " + request.getItemId());
+            }
+
+            // Other unexpected transaction failure
             throw e;
         }
     }
@@ -123,14 +133,35 @@ public class OrderService {
         );
     }
 
-    // Use a cross-table DynamoDB transaction so order creation is atomic
+    // Update inventory, orders, and idempotency state is a single atomic transaction
     private void createOrderTransaction(
-            Order order,
-            String idempotencyKey,
-            String requestFingerprint,
-            String responseJson,
-            String createdAt
+        Order order,
+        String idempotencyKey,
+        String requestFingerprint,
+        String responseJson,
+        String createdAt
     ) {
+        Map<String, AttributeValue> itemKey = Map.of(
+                "itemId", AttributeValue.fromS(order.getItemId())
+        );
+
+        // Values to update from transaction
+        Map<String, AttributeValue> updateValues = new HashMap<>();
+        updateValues.put(":quantity", AttributeValue.fromN(order.getQuantity().toString()));
+        updateValues.put(":updatedAt", AttributeValue.fromS(createdAt));
+
+        // Decrement inventory only if the item exists and enough stock is available
+        TransactWriteItem decrementInventory = TransactWriteItem.builder()
+                .update(Update.builder()
+                        .tableName(itemRepository.getTableName())
+                        .key(itemKey)
+                        .updateExpression("SET availableQuantity = availableQuantity - :quantity, updatedAt = :updatedAt")
+                        // Prevent overselling by rejecting orders that would make inventory negative.
+                        .conditionExpression("attribute_exists(itemId) AND availableQuantity >= :quantity")
+                        .expressionAttributeValues(updateValues)
+                        .build())
+                .build();
+
         // Order item
         Map<String, AttributeValue> orderItem = new HashMap<>();
         orderItem.put("orderId", AttributeValue.fromS(order.getOrderId()));
@@ -140,16 +171,7 @@ public class OrderService {
         orderItem.put("status", AttributeValue.fromS(order.getStatus()));
         orderItem.put("createdAt", AttributeValue.fromS(order.getCreatedAt()));
 
-        // Idempotency item
-        Map<String, AttributeValue> idempotencyItem = new HashMap<>();
-        idempotencyItem.put("idempotencyKey", AttributeValue.fromS(idempotencyKey));
-        idempotencyItem.put("requestFingerprint", AttributeValue.fromS(requestFingerprint));
-        idempotencyItem.put("responseCode", AttributeValue.fromN("201"));
-        idempotencyItem.put("responseBody", AttributeValue.fromS(responseJson));
-        idempotencyItem.put("createdAt", AttributeValue.fromS(createdAt));
-
-        // Transactional write entry for order
-        // Require orderId
+        // Insert the order record only if the orderId is not already used
         TransactWriteItem putOrder = TransactWriteItem.builder()
                 .put(Put.builder()
                         .tableName(orderRepository.getTableName())
@@ -158,8 +180,15 @@ public class OrderService {
                         .build())
                 .build();
 
-        // Transactional write entry for idempotency
-        // Require idempotencyKey
+        // Idempotency item
+        Map<String, AttributeValue> idempotencyItem = new HashMap<>();
+        idempotencyItem.put("idempotencyKey", AttributeValue.fromS(idempotencyKey));
+        idempotencyItem.put("requestFingerprint", AttributeValue.fromS(requestFingerprint));
+        idempotencyItem.put("responseCode", AttributeValue.fromN("201"));
+        idempotencyItem.put("responseBody", AttributeValue.fromS(responseJson));
+        idempotencyItem.put("createdAt", AttributeValue.fromS(createdAt));
+
+        // Store the response with the idempotency key so retries return the same order
         TransactWriteItem putIdempotency = TransactWriteItem.builder()
                 .put(Put.builder()
                         .tableName(idempotencyRepository.getTableName())
@@ -168,22 +197,34 @@ public class OrderService {
                         .build())
                 .build();
 
-        // Execute atomic transaction
+        // Execute atomic transaction for inventory, order, and idempotency state
         dynamoDbClient.transactWriteItems(TransactWriteItemsRequest.builder()
-                .transactItems(List.of(putOrder, putIdempotency))
+                .transactItems(List.of(decrementInventory, putOrder, putIdempotency))
                 .build());
     }
 
     // Check whether the transaction failed because the idempotency key already existed
     private boolean wasIdempotencyConflict(TransactionCanceledException e) {
         List<CancellationReason> reasons = e.cancellationReasons();
-        if (reasons == null || reasons.size() < 2) {
+        if (reasons == null || reasons.size() < 3) {
             return false;
         }
-
-        CancellationReason idempotencyReason = reasons.get(1);
+    
+        CancellationReason idempotencyReason = reasons.get(2);
         return idempotencyReason != null
                 && "ConditionalCheckFailed".equals(idempotencyReason.code());
+    }
+
+    // Detect insufficient stock for the requested order quantity
+    private boolean wasInventoryConflict(TransactionCanceledException e) {
+        List<CancellationReason> reasons = e.cancellationReasons();
+        if (reasons == null || reasons.isEmpty()) {
+            return false;
+        }
+    
+        CancellationReason inventoryReason = reasons.get(0);
+        return inventoryReason != null
+                && "ConditionalCheckFailed".equals(inventoryReason.code());
     }
 
     // Validate required headers and request body fields before creating the order

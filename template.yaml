@@ -14,7 +14,6 @@ Globals:
         ORDERS_TABLE_NAME: !Ref OrdersTable
         IDEMPOTENCY_TABLE_NAME: !Ref IdempotencyTable
         ITEMS_TABLE_NAME: !Ref ItemsTable
-        RESERVATIONS_TABLE_NAME: !Ref ReservationsTable
 
 Resources:
   CheckoutApiFunction:
@@ -29,8 +28,6 @@ Resources:
             TableName: !Ref IdempotencyTable
         - DynamoDBCrudPolicy:
             TableName: !Ref ItemsTable
-        - DynamoDBCrudPolicy:
-            TableName: !Ref ReservationsTable
       Events:
         HealthGet:
           Type: Api
@@ -57,11 +54,6 @@ Resources:
           Properties:
             Path: /items/{itemId}
             Method: get
-        ReservationsPost:
-          Type: Api
-          Properties:
-            Path: /reservations
-            Method: post
 
   OrdersTable:
     Type: AWS::DynamoDB::Table
@@ -99,17 +91,6 @@ Resources:
         - AttributeName: itemId
           KeyType: HASH
 
-  ReservationsTable:
-    Type: AWS::DynamoDB::Table
-    Properties:
-      TableName: checkout-reservations
-      BillingMode: PAY_PER_REQUEST
-      AttributeDefinitions:
-        - AttributeName: reservationId
-          AttributeType: S
-      KeySchema:
-        - AttributeName: reservationId
-          KeyType: HASH
 
 Outputs:
   ApiUrl:
