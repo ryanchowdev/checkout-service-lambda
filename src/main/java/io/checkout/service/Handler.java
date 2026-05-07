@@ -23,6 +23,7 @@ import io.checkout.service.dto.ItemResponse;
 import io.checkout.service.repository.ItemRepository;
 import io.checkout.service.service.ItemService;
 import io.checkout.service.exception.ConflictException;
+import io.checkout.service.exception.InsufficientInventoryException;
 import io.checkout.service.exception.NotFoundException;
 import io.checkout.service.exception.ValidationException;
 import io.checkout.service.repository.IdempotencyRepository;
@@ -65,6 +66,13 @@ public class Handler implements RequestHandler<APIGatewayProxyRequestEvent, APIG
         context.getLogger().log("Incoming request: method=" + method + ", path=" + path);
 
         try {
+            // Header to simulate failure for debugging/testing
+            String debugFail = header(request, "X-Debug-Fail");
+            if ("true".equalsIgnoreCase(debugFail)) {
+                context.getLogger().log("Injected failure triggered by X-Debug-Fail header");
+                throw new RuntimeException("Injected failure for failure-handling test");
+            }
+
             // Health check
             if ("GET".equals(method) && "/health".equals(path)) {
                 return jsonResponse(200, Map.of("status", "ok"));
@@ -98,6 +106,9 @@ public class Handler implements RequestHandler<APIGatewayProxyRequestEvent, APIG
         // Idempotency conflict
         } catch (ConflictException e) {
             return jsonResponse(409, new ErrorResponse("Conflict", e.getMessage()));
+        // Insufficient inventory
+        } catch (InsufficientInventoryException e) {
+            return jsonResponse(409, new ErrorResponse("Insufficient Inventory", e.getMessage()));
         // Missing order
         } catch (NotFoundException e) {
             return jsonResponse(404, new ErrorResponse("Not Found", e.getMessage()));
@@ -105,10 +116,11 @@ public class Handler implements RequestHandler<APIGatewayProxyRequestEvent, APIG
         } catch (IllegalArgumentException e) {
             return jsonResponse(400, new ErrorResponse("Bad Request", e.getMessage()));
         // Other exception
-        } catch (Exception e) {
-            context.getLogger().log("Unhandled exception: " + e.getMessage());
-            return jsonResponse(500, new ErrorResponse("Internal Server Error", "Unexpected error"));
-        }
+    } catch (Exception e) {
+        context.getLogger().log("Unhandled exception type: " + e.getClass().getName());
+        context.getLogger().log("Unhandled exception message: " + e.getMessage());
+        return jsonResponse(500, new ErrorResponse("Internal Server Error", "Unexpected error"));
+    }
     }
 
     // Parse the create order request and handle ordering logic in OrderService

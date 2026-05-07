@@ -13,6 +13,7 @@ import io.checkout.service.dto.CreateOrderRequest;
 import io.checkout.service.dto.CreateOrderResponse;
 import io.checkout.service.dto.GetOrderResponse;
 import io.checkout.service.exception.ConflictException;
+import io.checkout.service.exception.InsufficientInventoryException;
 import io.checkout.service.exception.NotFoundException;
 import io.checkout.service.exception.ValidationException;
 import io.checkout.service.model.IdempotencyRecord;
@@ -30,6 +31,7 @@ import software.amazon.awssdk.services.dynamodb.model.Put;
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItem;
 import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledException;
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsRequest;
+import software.amazon.awssdk.services.dynamodb.model.TransactionConflictException;
 
 import java.time.Instant;
 import java.util.HashMap;
@@ -108,8 +110,13 @@ public class OrderService {
 
             // For inventory conflict, the item is missing or out of stock
             if (wasInventoryConflict(e)) {
-                throw new ConflictException("Insufficient inventory for item: " + request.getItemId());
+                throw new InsufficientInventoryException("Insufficient inventory for item: " + request.getItemId());
             }
+
+            // Concurrent transaction conflict
+            if (wasTransactionConflict(e)) {
+                throw new ConflictException("Concurrent transaction conflict while creating order. Please retry.");
+            }        
 
             // Other unexpected transaction failure
             throw e;
@@ -222,9 +229,29 @@ public class OrderService {
             return false;
         }
     
-        CancellationReason inventoryReason = reasons.get(0);
-        return inventoryReason != null
-                && "ConditionalCheckFailed".equals(inventoryReason.code());
+        for (CancellationReason reason : reasons) {
+            if (reason != null && "ConditionalCheckFailed".equals(reason.code())) {
+                return true;
+            }
+        }
+    
+        return false;
+    }
+
+    // Detect transaction conflict
+    private boolean wasTransactionConflict(TransactionCanceledException e) {
+        List<CancellationReason> reasons = e.cancellationReasons();
+        if (reasons == null || reasons.isEmpty()) {
+            return false;
+        }
+    
+        for (CancellationReason reason : reasons) {
+            if (reason != null && "TransactionConflict".equals(reason.code())) {
+                return true;
+            }
+        }
+    
+        return false;
     }
 
     // Validate required headers and request body fields before creating the order

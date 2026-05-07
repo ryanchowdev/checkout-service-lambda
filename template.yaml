@@ -140,6 +140,9 @@ Resources:
                 CustomResponseBodyKey: TooManyRequestsBody
           Statement:
             RateBasedStatement:
+              # Control rate limit here
+              # Set to 10 to demonstrate rate limiting behavior
+              # Set to 9999999 to not get in the way of load tests
               Limit: 10
               AggregateKeyType: IP
               EvaluationWindowSec: 60
