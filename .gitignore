@@ -40,5 +40,8 @@ temp/
 coverage/
 reports/
 
+# k6 load test results
+load-tests/results/
+
 # Optional local config
 local.properties
