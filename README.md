@@ -116,9 +116,13 @@ Three Lambda-side failure scenarios were tested.
 
 An aggressive high-load k6 test `load-tests/get-order-spike.js` sent over 127,000 requests to `GET /orders/{orderId}`. The load exceeded the available Lambda concurrency.
 
+Result: Excess requests were throttled by Lambda before the handler executed.
+
 ### 2. Oversell Prevention
 
 For the oversell test `load-tests/oversell-test.js`, an item was created with inventory `3`, then 20 concurrent order attempts were sent using k6.
+
+Result: DynamoDB transactions and conditional updates prevented overselling.
 
 ### 3. WAF Rate Limiting
 
@@ -130,6 +134,8 @@ for i in {1..120}; do
 	curl -s -o /dev/null -w "%{http_code}\n" "$BASE_URL/orders/$ORDER_ID"  
 done
 ```
+
+Result: WAF blocked excessive traffic before it reached Lambda.
 
 ### EC2 Failure Demonstrations
 
@@ -183,7 +189,7 @@ docker build -t order-service .
 docker compose up --build
 ```
 
-Test the health endpoint::
+Test the health endpoint:
 
 ```bash
 curl -i "$BASE_URL/health"
