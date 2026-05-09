@@ -5,6 +5,7 @@ Serverless checkout/order service deployed on AWS EC2 and AWS Lambda.
 We compare an AWS Lambda-based serverless implementation of a checkout system against an EC2-based IaaS architecture. The service supports item creation, order creation, inventory decrement, idempotent order retries, order lookup, rate limiting, scaling tests, and failure demonstrations.
 
 The EC2-based implementation is located here: [https://github.com/fanzhang-code/orderServiceFan](https://github.com/fanzhang-code/orderServiceFan "https://github.com/fanzhang-code/orderServiceFan").
+
 The Lambda-based implementation is located here: [https://github.com/ryanchowdev/checkout-service-lambda](https://github.com/ryanchowdev/checkout-service-lambda "https://github.com/ryanchowdev/checkout-service-lambda").
 
 ## High-Level Deployment Description
